@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="CloudFront Bot Log Analyzer", layout="wide")
 st.title("CloudFront Bot Log Analyzer")
+st.markdown("*by [Islam Eldiasti](https://www.linkedin.com/in/islam-eldiasti/)*")
 
 # -----------------------
 # Helpers
