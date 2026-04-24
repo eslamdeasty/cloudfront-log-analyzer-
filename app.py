@@ -1,5 +1,7 @@
 import streamlit as st
 import json
+import gzip
+import io
 import urllib.parse
 from collections import Counter, defaultdict
 import pandas as pd
@@ -8,6 +10,75 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="CloudFront Bot Log Analyzer", layout="wide")
 st.title("CloudFront Bot Log Analyzer")
 st.markdown("*by [Islam Eldiasti](https://www.linkedin.com/in/islam-eldiasti/)*")
+
+# -----------------------
+# Bot classification
+# Returns (bot_name, category)
+# Categories: "AI Crawler", "Search Engine", "SEO Tool", "Social Preview", "Other Bot", "Human"
+# -----------------------
+def classify_bot(ua: str):
+    u = (ua or "").lower()
+
+    # --- AI / LLM Crawlers ---
+    if "oai-searchbot" in u:         return "OAI-SearchBot",       "AI Crawler"
+    if "gptbot" in u:                return "GPTBot",              "AI Crawler"
+    if "chatgpt-user" in u:          return "ChatGPT-User",        "AI Crawler"
+    if "claudebot" in u:             return "ClaudeBot",           "AI Crawler"
+    if "anthropic-ai" in u:          return "Anthropic-AI",        "AI Crawler"
+    if "perplexitybot" in u:         return "PerplexityBot",       "AI Crawler"
+    if "gemini" in u and "bot" in u: return "GeminiBot",           "AI Crawler"
+    if "meta-externalagent" in u:    return "Meta-ExternalAgent",  "AI Crawler"
+    if "bytespider" in u:            return "ByteSpider",          "AI Crawler"
+    if "diffbot" in u:               return "Diffbot",             "AI Crawler"
+    if "cohere-ai" in u:             return "Cohere-AI",           "AI Crawler"
+    if "youbot" in u:                return "YouBot",              "AI Crawler"
+
+    # --- Search Engines ---
+    if "googlebot" in u:             return "Googlebot",           "Search Engine"
+    if "adsbot-google" in u:         return "AdsBot-Google",       "Search Engine"
+    if "google-inspectiontool" in u: return "Google-Inspection",   "Search Engine"
+    if "bingbot" in u:               return "Bingbot",             "Search Engine"
+    if "applebot" in u:              return "Applebot",            "Search Engine"
+    if "yandex" in u:                return "Yandex",              "Search Engine"
+    if "duckduckbot" in u:           return "DuckDuckBot",         "Search Engine"
+    if "baiduspider" in u:           return "Baiduspider",         "Search Engine"
+    if "sogou" in u:                 return "Sogou",               "Search Engine"
+    if "exabot" in u:                return "Exabot",              "Search Engine"
+    if "ia_archiver" in u:           return "Alexa/Archive",       "Search Engine"
+    if "petalbot" in u:              return "PetalBot",            "Search Engine"
+    if "amazonbot" in u:             return "Amazonbot",           "Search Engine"
+    if "slurp" in u:                 return "Yahoo-Slurp",         "Search Engine"
+
+    # --- SEO Tools ---
+    if "ahrefsbot" in u:             return "AhrefsBot",           "SEO Tool"
+    if "semrushbot" in u:            return "SemrushBot",          "SEO Tool"
+    if "mj12bot" in u:               return "MJ12bot",             "SEO Tool"
+    if "majestic" in u:              return "Majestic",            "SEO Tool"
+    if "dotbot" in u:                return "DotBot",              "SEO Tool"
+    if "rogerbot" in u:              return "Rogerbot (Moz)",      "SEO Tool"
+    if "moz.com" in u:               return "Moz",                 "SEO Tool"
+    if "seokicks" in u:              return "SEOkicks",            "SEO Tool"
+    if "sistrix" in u:               return "Sistrix",             "SEO Tool"
+    if "screaming frog" in u:        return "Screaming Frog",      "SEO Tool"
+    if "seobility" in u:             return "Seobility",           "SEO Tool"
+    if "serpstat" in u:              return "Serpstat",            "SEO Tool"
+
+    # --- Social Previews ---
+    if "facebookexternalhit" in u or "facebot" in u:
+                                     return "Meta",                "Social Preview"
+    if "twitterbot" in u:            return "Twitterbot",          "Social Preview"
+    if "linkedinbot" in u:           return "LinkedInBot",         "Social Preview"
+    if "whatsapp" in u:              return "WhatsApp",            "Social Preview"
+    if "telegrambot" in u:           return "TelegramBot",         "Social Preview"
+    if "slackbot" in u:              return "Slackbot",            "Social Preview"
+    if "discordbot" in u:            return "Discordbot",          "Social Preview"
+
+    # --- Generic Bot Patterns ---
+    if any(k in u for k in [" bot", "bot/", "crawler", "spider", "crawl"]):
+        return "OtherBot", "Other Bot"
+
+    return "Human/Browser", "Human"
+
 
 # -----------------------
 # Helpers
@@ -20,53 +91,23 @@ def safe_unquote(s: str) -> str:
     except Exception:
         return str(s)
 
-def classify_bot(ua: str) -> str:
-    u = (ua or "").lower()
-    # AI/LLM bots
-    if "oai-searchbot" in u: return "OAI-SearchBot"
-    if "gptbot" in u: return "GPTBot"
-    if "chatgpt-user" in u: return "ChatGPT-User"
-
-    # Search engines / major crawlers
-    if "googlebot" in u: return "Googlebot"
-    if "adsbot-google" in u: return "AdsBot-Google"
-    if "bingbot" in u: return "Bingbot"
-    if "applebot" in u: return "Applebot"
-    if "yandex" in u: return "Yandex"
-    if "duckduckbot" in u: return "DuckDuckBot"
-    if "baiduspider" in u: return "Baiduspider"
-
-    # SEO tools
-    if "ahrefsbot" in u: return "AhrefsBot"
-    if "semrushbot" in u: return "SemrushBot"
-    if "mj12bot" in u or "majestic" in u: return "Majestic"
-    if "dotbot" in u: return "DotBot"
-
-    # Social previews
-    if "facebookexternalhit" in u or "facebot" in u: return "Meta"
-    if "twitterbot" in u: return "Twitterbot"
-
-    # Generic bot patterns
-    if any(k in u for k in [" bot", "bot/", "crawler", "spider", "slurp", "crawl"]):
-        return "OtherBot"
-
-    return "Non-bot/Browser/App"
-
 def path_group(path: str) -> str:
     if not path: return "other"
     if path.startswith("/article/"): return "/article/*"
-    if path.startswith("/tags/"): return "/tags/*"
+    if path.startswith("/tags/"):    return "/tags/*"
     if path.startswith("/section/"): return "/section/*"
-    if path.startswith("/live"): return "/live*"
-    if path.startswith("/api/"): return "/api/*"
-    if path.startswith("/static/"): return "/static/*"
-    if path.startswith("/_next/"): return "/_next/*"
-    if path.startswith("/images/"): return "/images/*"
-    if path == "/robots.txt": return "/robots.txt"
-    if path == "/": return "/ (homepage)"
+    if path.startswith("/live"):     return "/live*"
+    if path.startswith("/api/"):     return "/api/*"
+    if path.startswith("/static/"):  return "/static/*"
+    if path.startswith("/_next/"):   return "/_next/*"
+    if path.startswith("/images/"):  return "/images/*"
+    if path == "/robots.txt":        return "/robots.txt"
+    if path == "/":                  return "/ (homepage)"
     return "other"
 
 def counter_to_df(counter: Counter, value_col="count"):
+    if not counter:
+        return pd.DataFrame(columns=["key", value_col, "share_%"])
     df = pd.DataFrame(counter.items(), columns=["key", value_col])
     df = df.sort_values(value_col, ascending=False).reset_index(drop=True)
     total = df[value_col].sum() if len(df) else 1
@@ -83,21 +124,22 @@ def plot_bar(df, x, y, title, rotate=45):
     plt.tight_layout()
     st.pyplot(fig)
 
+def plot_pie(labels, sizes, title):
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140)
+    ax.set_title(title)
+    plt.tight_layout()
+    st.pyplot(fig)
+
 def plot_stacked_share(df, index_col, category_col, value_col, title, top_n=12):
-    """
-    Stacked bar (share %) for top N index values by total requests.
-    """
     if df.empty:
         st.info(f"No data for: {title}")
         return
-
     totals = df.groupby(index_col)[value_col].sum().sort_values(ascending=False).head(top_n)
     d = df[df[index_col].isin(totals.index)]
-
     pivot = d.pivot_table(index=index_col, columns=category_col, values=value_col, aggfunc="sum", fill_value=0)
     pivot = pivot.loc[totals.index]
     pivot_share = pivot.div(pivot.sum(axis=1), axis=0) * 100
-
     fig, ax = plt.subplots(figsize=(12, 5))
     bottom = None
     for col in pivot_share.columns:
@@ -108,7 +150,6 @@ def plot_stacked_share(df, index_col, category_col, value_col, title, top_n=12):
         else:
             ax.bar(pivot_share.index.astype(str), vals, bottom=bottom, label=str(col))
             bottom = bottom + vals
-
     ax.set_title(title)
     ax.set_xlabel(index_col)
     ax.set_ylabel("Share within " + index_col + " (%)")
@@ -124,20 +165,16 @@ def bot_insights(df_bots, df_status, df_xhosts, df_status_by_bot, df_pathgroup_b
         r = df[df[col] == key]
         return int(r.iloc[0][val_col]) if not r.empty else 0
 
-    http200 = get_val(df_status, "status", 200, "requests")
-    http301 = get_val(df_status, "status", 301, "requests")
-    http304 = get_val(df_status, "status", 304, "requests")
+    http301   = get_val(df_status, "status", 301, "requests")
+    http304   = get_val(df_status, "status", 304, "requests")
     err_total = int(df_errors["requests"].sum()) if (df_errors is not None and not df_errors.empty) else 0
-
-    www = get_val(df_xhosts, "x-host-header", "www.almashhad.com", "requests")
-    nonwww = get_val(df_xhosts, "x-host-header", "almashhad.com", "requests")
+    www       = get_val(df_xhosts, "x-host-header", "www.almashhad.com", "requests")
+    nonwww    = get_val(df_xhosts, "x-host-header", "almashhad.com", "requests")
 
     def pct(n, d): return round(n/d*100, 2) if d else 0.0
 
-    insights = []
-    actions = []
+    insights, actions = [], []
 
-    # Overall redirects
     redir_rate = pct(http301, total)
     if redir_rate >= 5:
         insights.append(f"High 301 redirect rate: {redir_rate}% (301={http301}).")
@@ -146,13 +183,11 @@ def bot_insights(df_bots, df_status, df_xhosts, df_status_by_bot, df_pathgroup_b
         insights.append(f"Moderate 301 redirect rate: {redir_rate}%.")
         actions.append("P1: Audit top 301 URLs and remove avoidable redirects (host, slash, encoding).")
 
-    # Host split
     nonwww_rate = pct(nonwww, www + nonwww)
     if nonwww_rate >= 2:
         insights.append(f"Non-www host usage: {nonwww_rate}% (`almashhad.com`) – likely generating redirects.")
         actions.append("P0: Normalize everything to https://www.almashhad.com (sitemaps, canonicals, internal links, OG).")
 
-    # Googlebot
     if not df_status_by_bot.empty:
         gb_total = int(df_status_by_bot[df_status_by_bot["bot"] == "Googlebot"]["requests"].sum())
         if gb_total:
@@ -165,95 +200,104 @@ def bot_insights(df_bots, df_status, df_xhosts, df_status_by_bot, df_pathgroup_b
             if pct(gb_304, gb_total) >= 30 and pct(gb_301, gb_total) >= 10:
                 actions.append("P1: Review caching headers/ETag/Last-Modified; high revalidation + redirects suggests crawl inefficiency.")
 
-    # Errors
     if err_total:
-        insights.append(f"4xx/5xx is low: {pct(err_total, total)}% (count={err_total}).")
+        insights.append(f"4xx/5xx rate: {pct(err_total, total)}% (count={err_total}).")
         top_err = df_errors.iloc[0]
         actions.append(f"P2: Fix top recurring error path: {top_err['path']} (hits={int(top_err['requests'])}).")
 
-    # De-dupe actions
     seen = set()
     actions = [a for a in actions if not (a in seen or seen.add(a))]
-
     return insights, actions
 
-# -----------------------
+
+# ======================
 # UI
-# -----------------------
+# ======================
 uploaded_files = st.file_uploader(
-    "Upload up to 5 CloudFront log files (JSON lines, uncompressed).",
+    "Upload CloudFront log files (JSON lines, .gz or uncompressed).",
     accept_multiple_files=True
 )
-
-if uploaded_files and len(uploaded_files) > 5:
-    st.error("Please upload a maximum of 5 files at a time.")
-    st.stop()
 
 run = st.button("Run analysis")
 
 if run and uploaded_files:
+
+    # -----------------------
     # Aggregators
-    total_requests = 0
-    bot_counts = Counter()
-    status_counts = Counter()
-    method_counts = Counter()
-    host_counts = Counter()
-    xhost_counts = Counter()
+    # -----------------------
+    total_requests  = 0
+    bot_counts      = Counter()
+    category_counts = Counter()
+    status_counts   = Counter()
+    method_counts   = Counter()
+    host_counts     = Counter()
+    xhost_counts    = Counter()
 
-    status_by_bot = defaultdict(Counter)
-    pathgroup_by_bot = defaultdict(Counter)
+    status_by_bot     = defaultdict(Counter)
+    pathgroup_by_bot  = defaultdict(Counter)
     url_counts_by_bot = defaultdict(Counter)
+    bot_to_category   = {}
 
-    error_paths = Counter()
+    error_paths   = Counter()
     error_samples = []
+    paths_404     = Counter()
+    samples_404   = []
 
-    progress = st.progress(0)
+    progress    = st.progress(0)
     total_files = len(uploaded_files)
 
     for i, uf in enumerate(uploaded_files, start=1):
-        for raw in uf:
-            line = raw.decode("utf-8", errors="ignore").strip()
+        raw_bytes = uf.read()
+        if raw_bytes[:2] == b'\x1f\x8b':
+            content = gzip.decompress(raw_bytes).decode("utf-8", errors="ignore")
+        else:
+            content = raw_bytes.decode("utf-8", errors="ignore")
+
+        for line in content.splitlines():
+            line = line.strip()
             if not line:
                 continue
             try:
                 rec = json.loads(line)
             except Exception:
                 continue
+            if not isinstance(rec, dict):
+                continue
 
             total_requests += 1
 
-            ua = safe_unquote(rec.get("cs(User-Agent)", ""))
-            bot = classify_bot(ua)
+            ua            = safe_unquote(rec.get("cs(User-Agent)", ""))
+            bot, category = classify_bot(ua)
+            path          = rec.get("cs-uri-stem", "") or ""
+            host          = rec.get("cs(Host)", "") or ""
+            xhost         = rec.get("x-host-header", "") or ""
+            method        = rec.get("cs-method", "") or ""
 
-            path = rec.get("cs-uri-stem", "") or ""
-            host = rec.get("cs(Host)", "") or ""
-            xhost = rec.get("x-host-header", "") or ""
-            method = rec.get("cs-method", "") or ""
-
-            # Status
             try:
                 status = int(rec.get("sc-status", None))
             except Exception:
                 status = None
 
-            bot_counts[bot] += 1
-            host_counts[host] += 1
-            xhost_counts[xhost] += 1
-            method_counts[method] += 1
+            bot_counts[bot]           += 1
+            category_counts[category] += 1
+            host_counts[host]         += 1
+            xhost_counts[xhost]       += 1
+            method_counts[method]     += 1
+            bot_to_category[bot]       = category
 
             if status is not None:
-                status_counts[status] += 1
+                status_counts[status]      += 1
                 status_by_bot[bot][status] += 1
 
                 if 400 <= status <= 599:
                     error_paths[path] += 1
                     if len(error_samples) < 30:
-                        error_samples.append({
-                            "status": status,
-                            "path": path,
-                            "bot": bot,
-                            "ua": ua[:140],
-                        })
+                        error_samples.append({"status": status, "path": path, "bot": bot, "ua": ua[:140]})
+
+                if status == 404:
+                    paths_404[path] += 1
+                    if len(samples_404) < 50:
+                        samples_404.append({"path": path, "bot": bot, "ua": ua[:140]})
 
             pg = path_group(path)
             pathgroup_by_bot[bot][pg] += 1
@@ -263,156 +307,222 @@ if run and uploaded_files:
 
         progress.progress(i / total_files)
 
-    st.success(f"Processed {total_requests:,} requests.")
+    st.success(f"✅ Processed **{total_requests:,}** requests from **{total_files}** file(s).")
 
     # -----------------------
-    # Build DataFrames (ALL)
+    # Build DataFrames
     # -----------------------
     df_bots = counter_to_df(bot_counts, "requests").rename(columns={"key": "bot"})
-    df_status = counter_to_df(status_counts, "requests").rename(columns={"key": "status"}).sort_values("status")
-    df_methods = counter_to_df(method_counts, "requests").rename(columns={"key": "method"})
-    df_hosts = counter_to_df(host_counts, "requests").rename(columns={"key": "cs(Host)"})
-    df_xhosts = counter_to_df(xhost_counts, "requests").rename(columns={"key": "x-host-header"})
+    df_bots["category"] = df_bots["bot"].map(bot_to_category)
 
-    # Status by bot
+    df_categories = counter_to_df(category_counts, "requests").rename(columns={"key": "category"})
+    df_status     = counter_to_df(status_counts, "requests").rename(columns={"key": "status"}).sort_values("status")
+    df_methods    = counter_to_df(method_counts, "requests").rename(columns={"key": "method"})
+    df_hosts      = counter_to_df(host_counts, "requests").rename(columns={"key": "cs(Host)"})
+    df_xhosts     = counter_to_df(xhost_counts, "requests").rename(columns={"key": "x-host-header"})
+
     rows = []
     for b, c in status_by_bot.items():
         total_b = sum(c.values()) or 1
         for stt, cnt in c.items():
-            rows.append({"bot": b, "status": stt, "requests": cnt, "share_within_bot_%": round(cnt/total_b*100, 2)})
-    df_status_by_bot = pd.DataFrame(rows)
+            rows.append({"bot": b, "category": bot_to_category.get(b, ""), "status": stt,
+                         "requests": cnt, "share_within_bot_%": round(cnt/total_b*100, 2)})
+    df_status_by_bot = pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    # Path groups by bot
     rows = []
     for b, c in pathgroup_by_bot.items():
         total_b = sum(c.values()) or 1
         for pg, cnt in c.items():
-            rows.append({"bot": b, "path_group": pg, "requests": cnt, "share_within_bot_%": round(cnt/total_b*100, 2)})
-    df_pathgroup_by_bot = pd.DataFrame(rows)
+            rows.append({"bot": b, "category": bot_to_category.get(b, ""), "path_group": pg,
+                         "requests": cnt, "share_within_bot_%": round(cnt/total_b*100, 2)})
+    df_pathgroup_by_bot = pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    # Top URLs by bot (Top N per bot)
     TOP_N = 50
     rows = []
     for b, c in url_counts_by_bot.items():
         for p, cnt in c.most_common(TOP_N):
-            rows.append({"bot": b, "path": p, "requests": cnt})
-    df_top_urls_by_bot = pd.DataFrame(rows)
+            rows.append({"bot": b, "category": bot_to_category.get(b, ""), "path": p, "requests": cnt})
+    df_top_urls_by_bot = pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    # Errors
-    df_errors = counter_to_df(error_paths, "requests").rename(columns={"key": "path"})
+    df_errors        = counter_to_df(error_paths, "requests").rename(columns={"key": "path"})
     df_error_samples = pd.DataFrame(error_samples)
+    df_404_paths     = counter_to_df(paths_404, "requests").rename(columns={"key": "path"})
+    df_404_samples   = pd.DataFrame(samples_404)
+
+    all_bots = sorted(df_bots["bot"].tolist())
 
     # -----------------------
-    # INSIGHTS
+    # BOT FILTER — sidebar
     # -----------------------
-    st.header("SEO Insights (Auto)")
-    insights, actions = bot_insights(df_bots, df_status, df_xhosts, df_status_by_bot, df_pathgroup_by_bot, df_errors)
+    st.sidebar.header("🔍 Bot Filter")
+    st.sidebar.markdown("Select bots to include in all charts and tables.")
+    selected_bots = st.sidebar.multiselect(
+        "Bots to include",
+        options=all_bots,
+        default=all_bots
+    )
+    if not selected_bots:
+        st.warning("No bots selected — showing all.")
+        selected_bots = all_bots
+
+    def filt_bot(df, col="bot"):
+        if df.empty or col not in df.columns:
+            return df
+        return df[df[col].isin(selected_bots)]
+
+    df_bots_f             = filt_bot(df_bots)
+    df_status_by_bot_f    = filt_bot(df_status_by_bot)
+    df_pathgroup_by_bot_f = filt_bot(df_pathgroup_by_bot)
+    df_top_urls_by_bot_f  = filt_bot(df_top_urls_by_bot)
+
+    # -----------------------
+    # OVERVIEW: Bot vs Human
+    # -----------------------
+    st.header("📊 Traffic Overview")
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        if not df_categories.empty:
+            human_total = int(df_categories[df_categories["category"] == "Human"]["requests"].sum()) \
+                          if "Human" in df_categories["category"].values else 0
+            bot_total   = total_requests - human_total
+            plot_pie(
+                ["Human / Browser", "Bots & Crawlers"],
+                [human_total, bot_total],
+                "Bot vs. Human Traffic"
+            )
+
+    with col2:
+        st.subheader("Traffic by Bot Category")
+        st.dataframe(df_categories, use_container_width=True)
+        plot_bar(df_categories, "category", "requests", "Requests by Category", rotate=25)
+
+    # -----------------------
+    # SEO INSIGHTS
+    # -----------------------
+    st.header("🔎 SEO Insights (Auto)")
+    insights, actions = bot_insights(
+        df_bots_f, df_status, df_xhosts,
+        df_status_by_bot_f, df_pathgroup_by_bot_f, df_errors
+    )
 
     if insights:
-        for i, s in enumerate(insights, 1):
-            st.write(f"{i}. {s}")
+        for idx, s in enumerate(insights, 1):
+            st.write(f"{idx}. {s}")
     else:
         st.write("No major issues detected from this sample window.")
 
     if actions:
-        st.subheader("Prioritized actions")
-        for i, a in enumerate(actions, 1):
-            st.write(f"{i}. {a}")
+        st.subheader("Prioritized Actions")
+        for idx, a in enumerate(actions, 1):
+            st.write(f"{idx}. {a}")
 
     # -----------------------
     # REPORTS + CHARTS
     # -----------------------
-    st.header("Reports & Charts")
+    st.header("📈 Reports & Charts")
 
-    # Requests by bot
-    st.subheader("Requests by bot")
-    st.dataframe(df_bots)
-    plot_bar(df_bots.head(20), "bot", "requests", "Requests by bot (Top 20)", rotate=45)
+    st.subheader("Requests by Bot")
+    st.dataframe(df_bots_f, use_container_width=True)
+    plot_bar(df_bots_f.head(20), "bot", "requests", "Requests by Bot (Top 20)", rotate=45)
 
-    # Status overall
-    st.subheader("Status codes (overall)")
-    st.dataframe(df_status)
-    plot_bar(df_status, "status", "requests", "Status codes (overall)", rotate=0)
+    st.subheader("Status Codes (Overall)")
+    st.dataframe(df_status, use_container_width=True)
+    plot_bar(df_status, "status", "requests", "Status Codes (Overall)", rotate=0)
 
-    # Methods
-    st.subheader("Methods (overall)")
-    st.dataframe(df_methods)
-    plot_bar(df_methods.head(15), "method", "requests", "HTTP methods (Top 15)", rotate=25)
+    st.subheader("HTTP Methods")
+    st.dataframe(df_methods, use_container_width=True)
+    plot_bar(df_methods.head(15), "method", "requests", "HTTP Methods (Top 15)", rotate=25)
 
-    # Hosts
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("cs(Host) distribution")
-        st.dataframe(df_hosts)
-        plot_bar(df_hosts.head(10), "cs(Host)", "requests", "cs(Host) distribution", rotate=25)
-    with c2:
-        st.subheader("x-host-header distribution")
-        st.dataframe(df_xhosts)
-        plot_bar(df_xhosts.head(10), "x-host-header", "requests", "x-host-header distribution", rotate=25)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("cs(Host) Distribution")
+        st.dataframe(df_hosts, use_container_width=True)
+        plot_bar(df_hosts.head(10), "cs(Host)", "requests", "cs(Host) Distribution", rotate=25)
+    with col2:
+        st.subheader("x-host-header Distribution")
+        st.dataframe(df_xhosts, use_container_width=True)
+        plot_bar(df_xhosts.head(10), "x-host-header", "requests", "x-host-header Distribution", rotate=25)
 
-    # Stacked status mix by bot
-    st.subheader("Status mix by bot (stacked %)")
-    if not df_status_by_bot.empty:
-        st.dataframe(df_status_by_bot.sort_values(["bot", "requests"], ascending=[True, False]))
-        plot_stacked_share(df_status_by_bot, "bot", "status", "requests", "Status mix by bot (Share %)", top_n=12)
+    st.subheader("Status Mix by Bot (Stacked %)")
+    if not df_status_by_bot_f.empty:
+        st.dataframe(df_status_by_bot_f.sort_values(["bot", "requests"], ascending=[True, False]), use_container_width=True)
+        plot_stacked_share(df_status_by_bot_f, "bot", "status", "requests", "Status Mix by Bot (Share %)", top_n=12)
     else:
         st.info("No status-by-bot data available.")
 
-    # Stacked crawl focus by bot
-    st.subheader("Crawl focus by bot (path groups, stacked %)")
-    if not df_pathgroup_by_bot.empty:
-        st.dataframe(df_pathgroup_by_bot.sort_values(["bot", "requests"], ascending=[True, False]))
-        plot_stacked_share(df_pathgroup_by_bot, "bot", "path_group", "requests", "Crawl focus by bot (Share %)", top_n=12)
+    st.subheader("Crawl Focus by Bot (Path Groups, Stacked %)")
+    if not df_pathgroup_by_bot_f.empty:
+        st.dataframe(df_pathgroup_by_bot_f.sort_values(["bot", "requests"], ascending=[True, False]), use_container_width=True)
+        plot_stacked_share(df_pathgroup_by_bot_f, "bot", "path_group", "requests", "Crawl Focus by Bot (Share %)", top_n=12)
     else:
         st.info("No path-group-by-bot data available.")
 
-    # Top URLs by bot (interactive)
-    st.subheader("Top URLs by bot")
-    if not df_top_urls_by_bot.empty:
-        bot_choice = st.selectbox("Choose bot", df_bots["bot"].tolist(), index=0)
-        show_n = st.slider("Show top N URLs", 10, 100, 30)
-
-        top_urls = pd.DataFrame(url_counts_by_bot[bot_choice].most_common(show_n), columns=["path", "requests"])
-        st.dataframe(top_urls)
-
-        # chart
+    st.subheader("Top URLs by Bot")
+    if not df_top_urls_by_bot_f.empty:
+        bot_choice = st.selectbox("Choose bot", df_bots_f["bot"].tolist(), index=0)
+        show_n     = st.slider("Show top N URLs", 10, 100, 30)
+        top_urls   = pd.DataFrame(url_counts_by_bot[bot_choice].most_common(show_n), columns=["path", "requests"])
+        st.dataframe(top_urls, use_container_width=True)
         chart_df = top_urls.copy()
-        chart_df["path_short"] = chart_df["path"].astype(str).apply(lambda s: s if len(s) <= 70 else s[:67] + "...")
+        chart_df["path_short"] = chart_df["path"].astype(str).apply(
+            lambda s: s if len(s) <= 70 else s[:67] + "..."
+        )
         plot_bar(chart_df.head(20), "path_short", "requests", f"Top URLs for {bot_choice} (Top 20)", rotate=75)
     else:
         st.info("No URL data available.")
 
-    # Errors (table only; chart intentionally removed)
-    st.subheader("4xx/5xx error paths (table)")
-    st.dataframe(df_errors.head(100))
-    st.subheader("Error samples")
-    st.dataframe(df_error_samples)
+    # -----------------------
+    # 404 PATHS — dedicated
+    # -----------------------
+    st.header("🚫 Top 404 Paths")
+    if not df_404_paths.empty:
+        st.caption(f"{len(df_404_paths):,} unique paths returned 404.")
+        st.dataframe(df_404_paths.head(100), use_container_width=True)
+        plot_bar(df_404_paths.head(20), "path", "requests", "Top 404 Paths (Top 20)", rotate=75)
+        st.subheader("404 Samples (by Bot)")
+        st.dataframe(df_404_samples, use_container_width=True)
+    else:
+        st.success("No 404 errors found in this log set. 🎉")
+
+    st.header("⚠️ All 4xx / 5xx Error Paths")
+    st.dataframe(df_errors.head(100), use_container_width=True)
+    st.subheader("Error Samples")
+    st.dataframe(df_error_samples, use_container_width=True)
 
     # -----------------------
-    # DOWNLOADS (ALL CSVs)
+    # DOWNLOAD — single Excel
     # -----------------------
-    st.header("Download CSVs")
+    st.header("⬇️ Download Report")
 
-    downloads = {
-        "requests_by_bot.csv": df_bots,
-        "status_overall.csv": df_status,
-        "methods_overall.csv": df_methods,
-        "cs_host_distribution.csv": df_hosts,
-        "x_host_header_distribution.csv": df_xhosts,
-        "status_by_bot.csv": df_status_by_bot,
-        "path_groups_by_bot.csv": df_pathgroup_by_bot,
-        "top_urls_by_bot.csv": df_top_urls_by_bot,
-        "error_paths_4xx_5xx.csv": df_errors,
-        "error_samples.csv": df_error_samples,
+    sheets = {
+        "Summary by Category":  df_categories,
+        "Requests by Bot":      df_bots,
+        "Status Overall":       df_status,
+        "Methods Overall":      df_methods,
+        "CS Host Distribution": df_hosts,
+        "X-Host Distribution":  df_xhosts,
+        "Status by Bot":        df_status_by_bot,
+        "Path Groups by Bot":   df_pathgroup_by_bot,
+        "Top URLs by Bot":      df_top_urls_by_bot,
+        "404 Paths":            df_404_paths,
+        "404 Samples":          df_404_samples,
+        "Error Paths 4xx5xx":   df_errors,
+        "Error Samples":        df_error_samples,
     }
 
-    for fname, dfo in downloads.items():
-        st.download_button(
-            label=f"Download {fname}",
-            data=dfo.to_csv(index=False),
-            file_name=fname,
-            mime="text/csv"
-        )
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, dfo in sheets.items():
+            dfo.to_excel(writer, sheet_name=sheet_name, index=False)
+    buffer.seek(0)
+
+    st.download_button(
+        label="⬇️ Download Full Report (.xlsx)",
+        data=buffer,
+        file_name="cloudfront_bot_analysis.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 else:
-    st.info("Upload files (max 5), then click **Run analysis**.")
+    st.info("Upload one or more CloudFront log files (.gz or uncompressed), then click **Run analysis**.")
