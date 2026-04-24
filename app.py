@@ -220,11 +220,12 @@ uploaded_files = st.file_uploader(
 
 run = st.button("Run analysis")
 
+# -----------------------
+# STEP 1: Process files only when Run is clicked
+# Store everything in session_state so filter reruns don't wipe results
+# -----------------------
 if run and uploaded_files:
 
-    # -----------------------
-    # Aggregators
-    # -----------------------
     total_requests  = 0
     bot_counts      = Counter()
     category_counts = Counter()
@@ -307,11 +308,7 @@ if run and uploaded_files:
 
         progress.progress(i / total_files)
 
-    st.success(f"✅ Processed **{total_requests:,}** requests from **{total_files}** file(s).")
-
-    # -----------------------
     # Build DataFrames
-    # -----------------------
     df_bots = counter_to_df(bot_counts, "requests").rename(columns={"key": "bot"})
     df_bots["category"] = df_bots["bot"].map(bot_to_category)
 
@@ -349,18 +346,63 @@ if run and uploaded_files:
     df_404_paths     = counter_to_df(paths_404, "requests").rename(columns={"key": "path"})
     df_404_samples   = pd.DataFrame(samples_404)
 
+    # Save everything to session_state
+    st.session_state["results"] = {
+        "total_requests":    total_requests,
+        "total_files":       total_files,
+        "df_bots":           df_bots,
+        "df_categories":     df_categories,
+        "df_status":         df_status,
+        "df_methods":        df_methods,
+        "df_hosts":          df_hosts,
+        "df_xhosts":         df_xhosts,
+        "df_status_by_bot":  df_status_by_bot,
+        "df_pathgroup_by_bot": df_pathgroup_by_bot,
+        "df_top_urls_by_bot": df_top_urls_by_bot,
+        "df_errors":         df_errors,
+        "df_error_samples":  df_error_samples,
+        "df_404_paths":      df_404_paths,
+        "df_404_samples":    df_404_samples,
+        "url_counts_by_bot": dict(url_counts_by_bot),
+    }
+
+# -----------------------
+# STEP 2: Display results from session_state
+# Runs on every rerender — including filter changes
+# -----------------------
+if "results" in st.session_state:
+    r = st.session_state["results"]
+
+    total_requests     = r["total_requests"]
+    total_files        = r["total_files"]
+    df_bots            = r["df_bots"]
+    df_categories      = r["df_categories"]
+    df_status          = r["df_status"]
+    df_methods         = r["df_methods"]
+    df_hosts           = r["df_hosts"]
+    df_xhosts          = r["df_xhosts"]
+    df_status_by_bot   = r["df_status_by_bot"]
+    df_pathgroup_by_bot= r["df_pathgroup_by_bot"]
+    df_top_urls_by_bot = r["df_top_urls_by_bot"]
+    df_errors          = r["df_errors"]
+    df_error_samples   = r["df_error_samples"]
+    df_404_paths       = r["df_404_paths"]
+    df_404_samples     = r["df_404_samples"]
+    url_counts_by_bot  = r["url_counts_by_bot"]
+
     all_bots = sorted(df_bots["bot"].tolist())
 
+    st.success(f"✅ Processed **{total_requests:,}** requests from **{total_files}** file(s).")
+
     # -----------------------
-    # BOT FILTER — sidebar
+    # BOT FILTER — main page
     # -----------------------
-    st.sidebar.header("🔍 Bot Filter")
-    st.sidebar.markdown("Select bots to include in all charts and tables.")
-    selected_bots = st.sidebar.multiselect(
-        "Bots to include",
-        options=all_bots,
-        default=all_bots
-    )
+    with st.expander("🔍 Bot Filter — click to expand", expanded=False):
+        selected_bots = st.multiselect(
+            "Select bots to include in all charts and tables:",
+            options=all_bots,
+            default=all_bots
+        )
     if not selected_bots:
         st.warning("No bots selected — showing all.")
         selected_bots = all_bots
