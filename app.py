@@ -597,3 +597,90 @@ if "results" in st.session_state:
 
 else:
     st.info("Upload one or more CloudFront log files (.gz or uncompressed), then click **Run analysis**.")
+
+    # -----------------------
+    # MOCK DATA PREVIEW
+    # -----------------------
+    st.markdown("---")
+    st.markdown("### 👇 Sample Output Preview")
+    st.caption("This is what your analysis will look like — populated with demo data.")
+
+    import numpy as np
+    rng = np.random.default_rng(42)
+
+    # Mock bots
+    mock_bots = ["Googlebot", "AhrefsBot", "SemrushBot", "GPTBot", "ClaudeBot",
+                 "PerplexityBot", "Bingbot", "Human/Browser", "AdsBot-Google",
+                 "Meta", "Twitterbot", "OtherBot"]
+    mock_bot_reqs = [18400, 9200, 7800, 5400, 3200, 2900, 4100, 42000, 1200, 800, 600, 1100]
+    total_mock = sum(mock_bot_reqs)
+    df_mock_bots = pd.DataFrame({
+        "bot": mock_bots,
+        "requests": mock_bot_reqs,
+        "share_%": [round(r/total_mock*100, 2) for r in mock_bot_reqs]
+    }).sort_values("requests", ascending=False).reset_index(drop=True)
+
+    # Mock categories
+    mock_cats = ["Human", "Search Engine", "SEO Tool", "AI Crawler", "Ad Bot", "Social Preview", "Other Bot"]
+    mock_cat_reqs = [42000, 22500, 17000, 11500, 1200, 1400, 1100]
+    total_cat = sum(mock_cat_reqs)
+    df_mock_cats = pd.DataFrame({
+        "category": mock_cats,
+        "requests": mock_cat_reqs,
+        "share_%": [round(r/total_cat*100, 2) for r in mock_cat_reqs]
+    })
+
+    # Mock status codes
+    df_mock_status = pd.DataFrame({
+        "status": [200, 301, 304, 404, 403, 500],
+        "requests": [78000, 8200, 5400, 3100, 420, 180],
+        "share_%": [81.5, 8.6, 5.6, 3.2, 0.7, 0.4]
+    })
+
+    # Mock path groups
+    mock_path_groups = ["/article/*", "/_next/*", "/tags/*", "/section/*",
+                        "/api/*", "/ (homepage)", "/images/*", "/robots.txt", "other"]
+    mock_pg_reqs = [38000, 18000, 12000, 9000, 7000, 4500, 3200, 1800, 2500]
+    df_mock_pathgroups = pd.DataFrame({
+        "path_group": mock_path_groups,
+        "requests": mock_pg_reqs
+    })
+
+    # Mock 404 paths
+    df_mock_404 = pd.DataFrame({
+        "path": ["/article/old-story", "/tags/deleted-tag", "/section/removed",
+                 "/article/broken-link", "/old-page"],
+        "requests": [420, 310, 280, 195, 140],
+        "share_%": [13.5, 10.0, 9.0, 6.3, 4.5]
+    })
+
+    # --- Render mock overview ---
+    st.header("📊 Traffic Overview  *(sample)*")
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        human_m = 42000
+        bot_m   = total_mock - human_m
+        plot_pie(["Human / Browser", "Bots & Crawlers"], [human_m, bot_m], "Bot vs. Human Traffic")
+
+    with col2:
+        st.subheader("Traffic by Bot Category")
+        st.dataframe(df_mock_cats, use_container_width=True)
+        plot_bar(df_mock_cats, "category", "requests", "Requests by Category", rotate=25)
+
+    # --- Mock reports ---
+    st.header("📈 Reports & Charts  *(sample)*")
+
+    st.subheader("Requests by Bot")
+    st.dataframe(df_mock_bots, use_container_width=True)
+    plot_bar(df_mock_bots, "bot", "requests", "Requests by Bot", rotate=45)
+
+    st.subheader("Status Codes (Overall)")
+    st.dataframe(df_mock_status, use_container_width=True)
+    plot_bar(df_mock_status, "status", "requests", "Status Codes (Overall)", rotate=0)
+
+    st.subheader("Crawl Focus by Bot (Path Groups)")
+    st.dataframe(df_mock_pathgroups, use_container_width=True)
+
+    st.header("🚫 Top 404 Paths  *(sample)*")
+    st.dataframe(df_mock_404, use_container_width=True)
