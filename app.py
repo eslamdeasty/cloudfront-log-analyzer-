@@ -521,7 +521,6 @@ if "results" in st.session_state:
     if not df_404_paths.empty:
         st.caption(f"{len(df_404_paths):,} unique paths returned 404.")
         st.dataframe(df_404_paths.head(100), use_container_width=True)
-        plot_bar(df_404_paths.head(20), "path", "requests", "Top 404 Paths (Top 20)", rotate=75)
         st.subheader("404 Samples (by Bot)")
         st.dataframe(df_404_samples, use_container_width=True)
     else:
@@ -529,8 +528,6 @@ if "results" in st.session_state:
 
     st.header("⚠️ All 4xx / 5xx Error Paths")
     st.dataframe(df_errors.head(100), use_container_width=True)
-    st.subheader("Error Samples")
-    st.dataframe(df_error_samples, use_container_width=True)
 
     # -----------------------
     # DOWNLOAD — single Excel
