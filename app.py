@@ -33,9 +33,19 @@ def classify_bot(ua: str):
     if "cohere-ai" in u:             return "Cohere-AI",           "AI Crawler"
     if "youbot" in u:                return "YouBot",              "AI Crawler"
 
+    # --- Ad Bots ---
+    if "adsbot-google-mobile" in u:  return "AdsBot-Google-Mobile", "Ad Bot"
+    if "adsbot-google" in u:         return "AdsBot-Google",         "Ad Bot"
+    if "mediapartners-google" in u:  return "Mediapartners-Google",  "Ad Bot"
+    if "google-adwords" in u:        return "Google-AdWords",        "Ad Bot"
+    if "adidxbot" in u:              return "AdIdxBot (Bing Ads)",   "Ad Bot"
+    if "bingpreview" in u:           return "BingPreview",           "Ad Bot"
+    if "yandex-direct" in u:         return "Yandex-Direct",         "Ad Bot"
+    if "facebookads" in u:           return "Facebook Ads",          "Ad Bot"
+    if "twitterads" in u:            return "Twitter Ads",           "Ad Bot"
+
     # --- Search Engines ---
     if "googlebot" in u:             return "Googlebot",           "Search Engine"
-    if "adsbot-google" in u:         return "AdsBot-Google",       "Search Engine"
     if "google-inspectiontool" in u: return "Google-Inspection",   "Search Engine"
     if "bingbot" in u:               return "Bingbot",             "Search Engine"
     if "applebot" in u:              return "Applebot",            "Search Engine"
@@ -91,19 +101,34 @@ def safe_unquote(s: str) -> str:
     except Exception:
         return str(s)
 
-def path_group(path: str) -> str:
-    if not path: return "other"
-    if path.startswith("/article/"): return "/article/*"
-    if path.startswith("/tags/"):    return "/tags/*"
-    if path.startswith("/section/"): return "/section/*"
-    if path.startswith("/live"):     return "/live*"
-    if path.startswith("/api/"):     return "/api/*"
-    if path.startswith("/static/"):  return "/static/*"
-    if path.startswith("/_next/"):   return "/_next/*"
-    if path.startswith("/images/"):  return "/images/*"
-    if path == "/robots.txt":        return "/robots.txt"
-    if path == "/":                  return "/ (homepage)"
-    return "other"
+def build_path_classifier(url_counts_by_bot: dict, top_n: int = 15):
+    """
+    Auto-detects the top N first-level path segments from the log data
+    and returns a classifier function. Works on any website automatically.
+    """
+    segment_counts = Counter()
+    for paths in url_counts_by_bot.values():
+        for path, cnt in paths.items():
+            if not path or path == "/":
+                continue
+            # Extract first segment: /article/foo -> "article"
+            first = path.strip("/").split("/")[0]
+            if first:
+                segment_counts["/" + first + "/"] += cnt
+
+    top_segments = set(seg for seg, _ in segment_counts.most_common(top_n))
+
+    def classify(path: str) -> str:
+        if not path:                  return "other"
+        if path == "/":               return "/ (homepage)"
+        if path == "/robots.txt":     return "/robots.txt"
+        first = path.strip("/").split("/")[0]
+        seg = "/" + first + "/" if first else None
+        if seg and seg in top_segments:
+            return seg + "*"
+        return "other"
+
+    return classify
 
 def counter_to_df(counter: Counter, value_col="count"):
     if not counter:
@@ -300,13 +325,20 @@ if run and uploaded_files:
                     if len(samples_404) < 50:
                         samples_404.append({"path": path, "bot": bot, "ua": ua[:140]})
 
-            pg = path_group(path)
-            pathgroup_by_bot[bot][pg] += 1
-
             if path:
                 url_counts_by_bot[bot][path] += 1
 
         progress.progress(i / total_files)
+
+    # Build dynamic path classifier from actual log data
+    path_group = build_path_classifier(url_counts_by_bot, top_n=15)
+
+    # Rebuild pathgroup_by_bot using the dynamic classifier
+    pathgroup_by_bot = defaultdict(Counter)
+    for bot, paths in url_counts_by_bot.items():
+        for path, cnt in paths.items():
+            pg = path_group(path)
+            pathgroup_by_bot[bot][pg] += cnt
 
     # Build DataFrames
     df_bots = counter_to_df(bot_counts, "requests").rename(columns={"key": "bot"})
